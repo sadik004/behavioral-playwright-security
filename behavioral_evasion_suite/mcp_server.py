@@ -166,6 +166,18 @@ AVAILABLE_TOOLS: List[Dict[str, Any]] = [
                 "audit_context_overflow": {"type": "boolean", "default": True, "description": "Audit page text against agent context window overflow limits."}
             }
         }
+    },
+    {
+        "name": "dynamic_diagnose_and_synthesize",
+        "description": "Scans page DNA, queries NotebookLM/Gemini for optimal minimal test spec, synthesizes Python auditor module (<150 tokens), hot-loads and executes live in session immediately, and triggers background Git persistence to sadik004/bug-hunter.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Active session ID returned by stealth_open_page."},
+                "anomaly_hint": {"type": "string", "description": "Optional anomaly description or technology hint."}
+            },
+            "required": ["session_id"]
+        }
     }
 ]
 

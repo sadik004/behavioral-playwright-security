@@ -19,6 +19,12 @@ import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
+import re
+
+try:
+    from .dynamic_probe_protocol import DynamicProbeSpec
+except ImportError:
+    from dynamic_probe_protocol import DynamicProbeSpec
 
 try:
     from .dna_extractor import WebsiteDNAReport, EndpointDNA, LibraryDNA
@@ -445,6 +451,48 @@ class NotebookLMBridge:
             return None
 
 
+
+    @classmethod
+    async def extract_optimal_solution(
+        cls,
+        target_stack: List[str],
+        observed_anomaly: str,
+        notebook_url: Optional[str] = None
+    ) -> Optional[DynamicProbeSpec]:
+        """Queries NotebookLM to extract the optimal minimal non-destructive probe specification."""
+        stack_str = ", ".join(target_stack)
+        question = (
+            f"Target Web Stack: {stack_str}\n"
+            f"Observed Architectural Anomaly / Bug Surface: {observed_anomaly}\n"
+            f"Extract the single most optimal, minimal, non-destructive test probe spec in JSON format with fields: "
+            f"probe_name, target_endpoint, method, headers, mutation_check_type, expected_indicator, cwe, rationale."
+        )
+        raw_response = await cls.query_notebook(question, notebook_url)
+        if not raw_response:
+            return None
+
+        try:
+            match = re.search(r"\{.*\}", raw_response, re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+                return DynamicProbeSpec(
+                    probe_name=data.get("probe_name", f"probe_{int(time.time())}"),
+                    target_endpoint=data.get("target_endpoint", "/"),
+                    method=data.get("method", "GET"),
+                    headers=data.get("headers", {}),
+                    payload=data.get("payload"),
+                    mutation_check_type=data.get("mutation_check_type", "header_reflection"),
+                    expected_indicator=str(data.get("expected_indicator", "200")),
+                    rollback_payload=data.get("rollback_payload"),
+                    cwe=data.get("cwe", "CWE-699"),
+                    research_source="Google NotebookLM Source Grounding",
+                    rationale=data.get("rationale", "Optimal solution derived from NotebookLM indexed sources")
+                )
+        except Exception:
+            pass
+        return None
+
+
 # =====================================================================
 # 6. UNIFIED MASTER GEMINI DOCTOR BRIDGE
 # =====================================================================
@@ -497,6 +545,106 @@ class GeminiDoctorBridge:
 
         # Step 4: Robust, deterministic Local Clinical Doctor with Knowledge Store
         return self.local_surgeon.diagnose_dna(dna_report)
+
+    async def synthesize_optimal_probe(
+        self,
+        dna_report: WebsiteDNAReport,
+        anomaly_hint: str = ""
+    ) -> DynamicProbeSpec:
+        """
+        Derives the optimal DynamicProbeSpec using:
+        1. NotebookLM research grounding (if configured)
+        2. Live Gemini 2.0 Flash reasoning (if API key present)
+        3. Deterministic Clinical Knowledge Store fallback (0-latency, 0-token)
+        """
+        # 1. Try NotebookLM
+        if self.notebook_url and NotebookLMBridge.is_configured():
+            try:
+                nb_spec = await NotebookLMBridge.extract_optimal_solution(
+                    target_stack=dna_report.framework_hints,
+                    observed_anomaly=anomaly_hint or "Default security reconnaissance",
+                    notebook_url=self.notebook_url
+                )
+                if nb_spec:
+                    return nb_spec
+            except Exception:
+                pass
+
+        # 2. Try Gemini Doctor if available
+        if self.genai_doctor.is_available:
+            try:
+                prompt = (
+                    f"Given website DNA: Stack={dna_report.framework_hints}, Endpoints={len(dna_report.endpoints)}, "
+                    f"Anomaly='{anomaly_hint}'. Synthesize a compact optimal probe spec in JSON with: "
+                    f"probe_name, target_endpoint, method, headers, mutation_check_type, expected_indicator, cwe, rationale."
+                )
+                raw_gemini = await self.genai_doctor.client.aio.models.generate_content(
+                    model=self.genai_doctor.MODEL_ID,
+                    contents=prompt
+                )
+                if raw_gemini and raw_gemini.text:
+                    match = re.search(r"\{.*\}", raw_gemini.text, re.DOTALL)
+                    if match:
+                        data = json.loads(match.group(0))
+                        return DynamicProbeSpec(
+                            probe_name=data.get("probe_name", f"probe_{int(time.time())}"),
+                            target_endpoint=data.get("target_endpoint", "/"),
+                            method=data.get("method", "GET"),
+                            headers=data.get("headers", {}),
+                            payload=data.get("payload"),
+                            mutation_check_type=data.get("mutation_check_type", "header_reflection"),
+                            expected_indicator=str(data.get("expected_indicator", "200")),
+                            rollback_payload=data.get("rollback_payload"),
+                            cwe=data.get("cwe", "CWE-699"),
+                            research_source="Gemini 2.0 Flash Synthesis",
+                            rationale=data.get("rationale", "Optimal spec derived from live Gemini diagnosis")
+                        )
+            except Exception:
+                pass
+
+        # 3. Deterministic Local Knowledge Store Fallback (0-token, zero-latency)
+        hints = [h.lower() for h in dna_report.framework_hints]
+        if any("graphql" in h for h in hints):
+            return DynamicProbeSpec(
+                probe_name="graphql_introspection_check",
+                target_endpoint="/graphql",
+                method="POST",
+                headers={"Content-Type": "application/json"},
+                payload={"query": "{__schema{types{name}}}"},
+                mutation_check_type="body_substring",
+                expected_indicator="__schema",
+                cwe="CWE-200",
+                research_source="Local Indexed Security Research Knowledge Store",
+                rationale="Deterministic optimal probe for detected GraphQL framework"
+            )
+        elif any(f in hints for f in ["express", "node.js", "next.js"]):
+            target_ep = dna_report.endpoints[0].url if dna_report.endpoints else "/"
+            return DynamicProbeSpec(
+                probe_name="express_json_spaces_sspp",
+                target_endpoint=target_ep,
+                method="POST",
+                headers={"Content-Type": "application/json"},
+                payload={"__proto__": {"json spaces": 10}},
+                mutation_check_type="body_substring",
+                expected_indicator="          ",
+                rollback_payload={"__proto__": {"json spaces": 0}},
+                cwe="CWE-1321",
+                research_source="PortSwigger Research (Gareth Heyes, 2022)",
+                rationale="Deterministic optimal SSPP probe with safe rollback"
+            )
+        else:
+            return DynamicProbeSpec(
+                probe_name="http_header_reflection_probe",
+                target_endpoint="/",
+                method="GET",
+                headers={"X-Forwarded-Host": "security-canary.internal"},
+                mutation_check_type="header_reflection",
+                expected_indicator="security-canary.internal",
+                cwe="CWE-444",
+                research_source="Local Clinical Rule Surgeon",
+                rationale="Generic non-destructive cache and header reflection diagnostic"
+            )
+
 
 
 if __name__ == "__main__":
